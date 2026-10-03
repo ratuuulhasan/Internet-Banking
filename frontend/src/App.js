@@ -11,6 +11,12 @@ import Dashboard from './pages/Dashboard';
 import Transfer from './pages/Transfer';
 import Accounts from './pages/Accounts';
 import Transactions from './pages/Transactions';
+import KYC from './pages/KYC';
+import Bills from './pages/Bills';
+import Cards from './pages/Cards';
+import Loans from './pages/Loans';
+import Notifications from './pages/Notifications';
+import Complaints from './pages/Complaints';
 import Navbar from './components/Navbar';
 
 const Protected = ({ children }) => {
@@ -31,6 +37,12 @@ function AppRoutes() {
         <Route path="/accounts" element={<Protected><Accounts /></Protected>} />
         <Route path="/transfer" element={<Protected><Transfer /></Protected>} />
         <Route path="/transactions" element={<Protected><Transactions /></Protected>} />
+        <Route path="/kyc" element={<Protected><KYC /></Protected>} />
+        <Route path="/bills" element={<Protected><Bills /></Protected>} />
+        <Route path="/cards" element={<Protected><Cards /></Protected>} />
+        <Route path="/loans" element={<Protected><Loans /></Protected>} />
+        <Route path="/notifications" element={<Protected><Notifications /></Protected>} />
+        <Route path="/complaints" element={<Protected><Complaints /></Protected>} />
       </Routes>
       <ToastContainer position="top-right" />
     </>
