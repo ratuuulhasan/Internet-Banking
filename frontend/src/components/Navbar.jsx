@@ -1,13 +1,15 @@
-import { Link, useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { useContext } from 'react';
 import { AuthContext } from '../context/AuthContext';
-import { Navbar as BSNavbar, Nav, Container } from 'react-bootstrap';
+import { Navbar as BSNavbar, Nav, Container, Badge } from 'react-bootstrap';
 
 export default function Navbar() {
   const { user, logout } = useContext(AuthContext);
+  const isAdmin = ['ADMIN', 'SYS_ADMIN'].includes(user?.role);
+
   return (
     <BSNavbar bg="primary" variant="dark" expand="lg">
-      <Container>
+      <Container fluid>
         <BSNavbar.Brand as={Link} to="/">🏦 IBS</BSNavbar.Brand>
         <BSNavbar.Toggle />
         <BSNavbar.Collapse>
@@ -23,8 +25,15 @@ export default function Navbar() {
             <Nav.Link as={Link} to="/complaints">Support</Nav.Link>
             <Nav.Link as={Link} to="/notifications">🔔</Nav.Link>
           </Nav>
-          <Nav>
-            <span className="navbar-text text-white me-3">{user?.full_name}</span>
+          <Nav className="align-items-center">
+            {isAdmin && (
+              <Nav.Link as={Link} to="/admin" className="text-warning fw-bold">
+                👑 Admin Panel
+              </Nav.Link>
+            )}
+            <span className="navbar-text text-white me-3">
+              {user?.full_name} <Badge bg="light" text="dark">{user?.role}</Badge>
+            </span>
             <button className="btn btn-outline-light btn-sm" onClick={logout}>Logout</button>
           </Nav>
         </BSNavbar.Collapse>

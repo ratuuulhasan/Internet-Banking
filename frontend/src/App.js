@@ -19,6 +19,16 @@ import Notifications from './pages/Notifications';
 import Complaints from './pages/Complaints';
 import Navbar from './components/Navbar';
 
+// Admin
+import AdminRoute from './components/AdminRoute';
+import AdminLayout from './layouts/AdminLayout';
+import AdminDashboard from './pages/admin/AdminDashboard';
+import AdminUsers from './pages/admin/Users';
+import AdminKYC from './pages/admin/KYCApproval';
+import AdminFraud from './pages/admin/FraudAlerts';
+import AdminLoans from './pages/admin/Loans';
+import AdminComplaints from './pages/admin/Complaints';
+
 const Protected = ({ children }) => {
   const { user, loading } = useContext(AuthContext);
   if (loading) return <div className="text-center mt-5">Loading...</div>;
@@ -43,6 +53,16 @@ function AppRoutes() {
         <Route path="/loans" element={<Protected><Loans /></Protected>} />
         <Route path="/notifications" element={<Protected><Notifications /></Protected>} />
         <Route path="/complaints" element={<Protected><Complaints /></Protected>} />
+
+        {/* ADMIN ROUTES */}
+        <Route path="/admin" element={<AdminRoute><AdminLayout /></AdminRoute>}>
+          <Route index element={<AdminDashboard />} />
+          <Route path="users" element={<AdminUsers />} />
+          <Route path="kyc" element={<AdminKYC />} />
+          <Route path="fraud" element={<AdminFraud />} />
+          <Route path="loans" element={<AdminLoans />} />
+          <Route path="complaints" element={<AdminComplaints />} />
+        </Route>
       </Routes>
       <ToastContainer position="top-right" />
     </>
