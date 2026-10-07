@@ -1,10 +1,12 @@
 from django.db import transaction as db_transaction
+from django.db import models
 from django.utils import timezone
 from rest_framework import viewsets, status
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from decimal import Decimal
+from datetime import timedelta
 import requests
 from django.conf import settings
 
@@ -34,11 +36,13 @@ class TransferView(APIView):
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
 
-        # Verify OTP (placeholder — real OTP app er sathe integrate korte hobe)
+        # Verify OTP
         from apps.otp_service.utils import verify_otp
         if not verify_otp(request.user, data['otp_code'], 'TRANSFER'):
-            return Response({'error': 'Invalid or expired OTP'},
-                            status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {'error': 'Invalid or expired OTP'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
         try:
             with db_transaction.atomic():
@@ -56,23 +60,31 @@ class TransferView(APIView):
                         status='ACTIVE'
                     )
                 except Account.DoesNotExist:
-                    return Response({'error': 'Destination account not found'},
-                                    status=status.HTTP_404_NOT_FOUND)
+                    return Response(
+                        {'error': 'Destination account not found'},
+                        status=status.HTTP_404_NOT_FOUND
+                    )
 
                 if src.account_id == dst.account_id:
-                    return Response({'error': 'Cannot transfer to same account'},
-                                    status=status.HTTP_400_BAD_REQUEST)
+                    return Response(
+                        {'error': 'Cannot transfer to same account'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
 
                 amount = data['amount']
 
                 # Business rules
                 if src.balance < amount:
-                    return Response({'error': 'Insufficient balance'},
-                                    status=status.HTTP_400_BAD_REQUEST)
+                    return Response(
+                        {'error': 'Insufficient balance'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
 
                 if amount > Decimal('200000'):
-                    return Response({'error': 'Per transaction limit exceeded (৳2,00,000)'},
-                                    status=status.HTTP_400_BAD_REQUEST)
+                    return Response(
+                        {'error': 'Per transaction limit exceeded (৳2,00,000)'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
 
                 # Create transaction record first
                 txn = Transaction.objects.create(
@@ -86,19 +98,29 @@ class TransferView(APIView):
                     ip_address=self.get_client_ip(request),
                 )
 
-                # AI fraud check
-                fraud_score = self._check_fraud(txn, src)
-                txn.fraud_score = fraud_score
+                # 🔥 AI Fraud Check (UPGRADED with more features)
+                fraud_result = self._check_fraud(txn, src)
+                fraud_score = fraud_result.get('fraud_score', 0)
+                risk_level = fraud_result.get('risk_level', 'UNKNOWN')
 
-                if fraud_score and fraud_score > 0.8:
+                txn.fraud_score = fraud_score
+                txn.save(update_fields=['fraud_score'])
+
+                # High-risk → Hold for manual review
+                if fraud_score >= 0.8:
                     txn.status = 'HELD'
                     txn.save()
-                    log_action(request.user, 'TRANSFER_HELD', 'Transaction', txn.transaction_id,
-                               {'fraud_score': fraud_score})
+                    log_action(
+                        request.user, 'TRANSFER_HELD', 'Transaction',
+                        txn.transaction_id,
+                        {'fraud_score': fraud_score, 'risk_level': risk_level}
+                    )
                     return Response({
                         'message': 'Transaction held for manual review due to security check.',
                         'reference_no': txn.reference_no,
                         'status': 'HELD',
+                        'fraud_score': fraud_score,
+                        'risk_level': risk_level,
                     }, status=status.HTTP_202_ACCEPTED)
 
                 # Perform transfer
@@ -111,8 +133,11 @@ class TransferView(APIView):
                 txn.completed_at = timezone.now()
                 txn.save()
 
-                log_action(request.user, 'TRANSFER_SUCCESS', 'Transaction', txn.transaction_id,
-                           {'amount': str(amount), 'to': dst.account_number})
+                log_action(
+                    request.user, 'TRANSFER_SUCCESS', 'Transaction',
+                    txn.transaction_id,
+                    {'amount': str(amount), 'to': dst.account_number}
+                )
 
                 return Response({
                     'message': 'Transfer successful',
@@ -120,14 +145,20 @@ class TransferView(APIView):
                     'status': 'SUCCESS',
                     'amount': str(amount),
                     'new_balance': str(src.balance),
+                    'fraud_score': fraud_score,
+                    'risk_level': risk_level,
                 }, status=status.HTTP_201_CREATED)
 
         except Account.DoesNotExist:
-            return Response({'error': 'Account not found'},
-                            status=status.HTTP_404_NOT_FOUND)
+            return Response(
+                {'error': 'Account not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
         except Exception as e:
-            return Response({'error': str(e)},
-                            status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
     @staticmethod
     def get_client_ip(request):
@@ -138,22 +169,56 @@ class TransferView(APIView):
 
     @staticmethod
     def _check_fraud(txn, account):
-        """Call AI microservice"""
+        """Call AI microservice for fraud detection."""
         try:
-            response = requests.post(
+            import requests
+            from django.conf import settings
+            from django.utils import timezone
+            from django.db import models
+
+            last_24h = timezone.now() - timezone.timedelta(hours=24)
+
+            # Velocity
+            recent_qs = Transaction.objects.filter(
+                from_account__user=account.user,
+                created_at__gte=last_24h,
+            ).exclude(transaction_id=txn.transaction_id)
+
+            txn_count_24h = recent_qs.count()
+
+            if recent_qs.exists():
+                avg_amount = float(
+                    recent_qs.aggregate(models.Avg('amount'))['amount__avg'] or 0
+                )
+            else:
+                avg_amount = float(txn.amount)
+
+            payload = {
+                'amount': float(txn.amount),
+                'hour': txn.created_at.hour,
+                'txn_type': 1,
+                'device_change': 0,
+                'location_change': 0,
+                'account_age_days': (timezone.now() - account.opened_at).days,
+                'txn_count_24h': txn_count_24h,
+                'avg_amount_24h': avg_amount,
+            }
+
+            r = requests.post(
                 f"{settings.AI_SERVICE_URL}/fraud/predict",
-                json={
-                    'amount': float(txn.amount),
-                    'hour': txn.created_at.hour,
-                    'txn_type': 1,
-                    'device_change': 0,
-                    'location_change': 0,
-                    'account_age_days': (timezone.now() - account.opened_at).days,
-                },
-                timeout=3
+                json=payload,
+                timeout=5,
             )
-            if response.status_code == 200:
-                return response.json().get('fraud_score', 0)
-        except Exception:
-            pass
+
+            if r.status_code == 200:
+                data = r.json()
+                score = data.get('fraud_score', 0)
+                txn.fraud_score = score
+                txn.save(update_fields=['fraud_score'])
+                print(f"🔍 Fraud check: {score} ({data.get('risk_level')}) - {data.get('reasons', [])}")
+                return score
+
+        except Exception as e:
+            print(f"⚠️  Fraud check failed: {e}")
+
         return 0.0

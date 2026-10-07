@@ -1,4 +1,4 @@
-# ===== Python =====
+# ===== Python / Django =====
 __pycache__/
 *.py[cod]
 *$py.class
@@ -9,34 +9,37 @@ env/
 ENV/
 .venv/
 *.egg-info/
-.pytest_cache/
-.coverage
-htmlcov/
+dist/
+build/
 
-# ===== Django =====
+# Django
 *.log
 db.sqlite3
 db.sqlite3-journal
-/media/
-/staticfiles/
+/backend/media/
+/backend/staticfiles/
 /backend/.env
-.env
-.env.local
-.env.production
+/backend/.env.local
 
 # ===== AI Service =====
-ai-service/venv/
-ai-service/models/*.pkl
-ai-service/models/*.h5
-ai-service/models/*.pt
-ai-service/dataset/*.csv
-ai-service/dataset/*.zip
-ai-service/__pycache__/
+/ai-service/venv/
+/ai-service/models/*.pkl
+/ai-service/models/*.json
+!/ai-service/models/.gitkeep
+/ai-service/training/dataset/
+/ai-service/training/dataset/**
+*.pkl
+*.h5
+*.joblib
+*.csv
+!requirements.txt
 
 # ===== Node / React =====
 node_modules/
+/frontend/node_modules/
 /frontend/build/
 /frontend/.env
+/frontend/.env.local
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
@@ -48,14 +51,28 @@ yarn-error.log*
 .idea/
 *.swp
 *.swo
+*~
 .DS_Store
 Thumbs.db
 
-# ===== Docker =====
-*.pid
-docker-compose.override.yml
+# ===== Misc =====
+*.bak
+*.tmp
+.cache/
+.env
+.env.local
+*.log
+coverage/
+htmlcov/
+.pytest_cache/
+.mypy_cache/
 
-# ===== Secrets =====
-*.pem
-*.key
-secrets/
+# ===== Kaggle =====
+kaggle.json
+.kaggle/
+
+# Training output images
+/ai-service/models/*.png
+
+# But keep this one for README
+!/ai-service/models/model_comparison.png
