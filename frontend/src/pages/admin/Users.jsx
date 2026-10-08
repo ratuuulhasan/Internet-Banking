@@ -15,16 +15,16 @@ export default function Users() {
 
   const load = () => {
     setLoading(true);
-    adminApi.listUsers({
-      search, role: roleFilter, status: statusFilter
-    }).then(r => setUsers(r.data.results || r.data))
+    adminApi.listUsers({ search, role: roleFilter, status: statusFilter })
+      .then(r => setUsers(r.data.results || r.data))
+      .catch(() => toast.error('Failed to load users'))
       .finally(() => setLoading(false));
   };
 
   useEffect(load, [search, roleFilter, statusFilter]);
 
   const toggleBlock = async (u) => {
-    if (!window.confirm(`Are you sure to ${u.status === 'BLOCKED' ? 'unblock' : 'block'} this user?`)) return;
+    if (!window.confirm(`${u.status === 'BLOCKED' ? 'Unblock' : 'Block'} this user?`)) return;
     try {
       if (u.status === 'BLOCKED') {
         await adminApi.unblockUser(u.user_id);
@@ -86,21 +86,27 @@ export default function Users() {
               <option>BLOCKED</option>
               <option>CLOSED</option>
             </Form.Select>
-            <Button variant="primary" onClick={load}>🔄 Refresh</Button>
+            <Button variant="primary" onClick={load}>🔄</Button>
           </div>
 
           {loading ? <Spinner animation="border" /> : (
             <Table striped hover responsive>
               <thead>
                 <tr>
-                  <th>ID</th><th>Name</th><th>Email</th><th>Phone</th>
-                  <th>Role</th><th>Status</th><th>Joined</th><th>Actions</th>
+                  <th style={{ width: 60 }}>#</th>
+                  <th>Name</th>
+                  <th>Email</th>
+                  <th>Phone</th>
+                  <th>Role</th>
+                  <th>Status</th>
+                  <th>Joined</th>
+                  <th style={{ width: 160 }}>Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {users.map(u => (
+                {users.map((u, index) => (
                   <tr key={u.user_id}>
-                    <td>{u.user_id}</td>
+                    <td><strong>{index + 1}</strong></td>
                     <td>{u.full_name}</td>
                     <td>{u.email}</td>
                     <td>{u.phone}</td>
@@ -124,6 +130,9 @@ export default function Users() {
                     </td>
                   </tr>
                 ))}
+                {users.length === 0 && !loading && (
+                  <tr><td colSpan={8} className="text-center text-muted">No users found</td></tr>
+                )}
               </tbody>
             </Table>
           )}

@@ -1,8 +1,6 @@
 """
-Hybrid Fraud Detection:
-- Uses full XGBoost model (V1-V28) when available
-- Falls back to contextual rule-based scoring in production
-- Combines both for final score
+Fraud Detection API Router.
+Loads trained XGBoost model + SHAP explainer and serves predictions.
 """
 import os
 import json
@@ -12,33 +10,39 @@ import pandas as pd
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+# 👇 SHAP service import
+from services.shap_service import shap_service
+
 router = APIRouter()
 
+# ---------- Paths ----------
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MODEL_DIR = os.path.join(BASE_DIR, 'models')
 
 
+# ---------- Load model on module import ----------
 def load_artifacts():
-    """Load full model + fallback to v2 if full not available."""
-    artifacts = {}
-
-    # Full model (with V1-V28)
     try:
-        artifacts['full_model'] = joblib.load(os.path.join(MODEL_DIR, 'fraud_model_full.pkl'))
-        artifacts['full_scaler'] = joblib.load(os.path.join(MODEL_DIR, 'scaler_full.pkl'))
-        artifacts['full_threshold'] = joblib.load(os.path.join(MODEL_DIR, 'threshold_full.pkl'))
-        with open(os.path.join(MODEL_DIR, 'meta_full.json')) as f:
-            artifacts['full_meta'] = json.load(f)
-        print(f"✅ Full model loaded (ROC-AUC: {artifacts['full_meta'].get('roc_auc', 0):.4f})")
+        model = joblib.load(os.path.join(MODEL_DIR, 'fraud_model.pkl'))
+        scaler = joblib.load(os.path.join(MODEL_DIR, 'scaler.pkl'))
+        threshold = joblib.load(os.path.join(MODEL_DIR, 'threshold.pkl'))
+        meta = {}
+        meta_path = os.path.join(MODEL_DIR, 'model_meta.json')
+        if os.path.exists(meta_path):
+            with open(meta_path) as f:
+                meta = json.load(f)
+        print("✅ Fraud model loaded successfully")
+        return model, scaler, threshold, meta
     except Exception as e:
-        print(f"⚠️  Full model not found: {e}")
-
-    return artifacts
-
-
-ARTIFACTS = load_artifacts()
+        print(f"⚠️  Model not found ({e}). Run training first:")
+        print("   cd training && python train_fraud.py")
+        return None, None, 0.5, {}
 
 
+MODEL, SCALER, THRESHOLD, META = load_artifacts()
+
+
+# ---------- Request Schema ----------
 class TxnFeatures(BaseModel):
     amount: float = Field(..., ge=0)
     hour: int = Field(12, ge=0, le=23)
@@ -48,184 +52,178 @@ class TxnFeatures(BaseModel):
     account_age_days: int = 0
     txn_count_24h: int = 1
     avg_amount_24h: float = 0.0
-    # Optional: pass V1-V28 if available from core banking
-    v_features: list = Field(default_factory=list)
 
 
-def contextual_risk_score(t: TxnFeatures) -> tuple:
-    """
-    Rule-based risk scoring for production.
-    Returns (score 0-1, reasons list).
-    """
-    score = 0.0
-    reasons = []
-
+# ---------- Feature builder ----------
+def build_feature_vector(t: TxnFeatures) -> pd.DataFrame:
+    """Build feature row matching training column order."""
     amount = t.amount
     avg = t.avg_amount_24h or amount
 
-    # 1. Amount anomalies
-    if amount > avg * 5 and amount > 50000:
-        score += 0.25
-        reasons.append(f"Amount 5x higher than average ({amount:.0f} vs {avg:.0f})")
-    elif amount > avg * 3 and amount > 20000:
-        score += 0.15
-        reasons.append(f"Amount 3x higher than average")
+    row = {
+        # PCA features (V1-V28) — 0 by default (simulation)
+        'V1': 0, 'V2': 0, 'V3': 0, 'V4': 0, 'V5': 0, 'V6': 0, 'V7': 0,
+        'V8': 0, 'V9': 0, 'V10': 0, 'V11': 0, 'V12': 0, 'V13': 0,
+        'V14': 0, 'V15': 0, 'V16': 0, 'V17': 0, 'V18': 0, 'V19': 0,
+        'V20': 0, 'V21': 0, 'V22': 0, 'V23': 0, 'V24': 0, 'V25': 0,
+        'V26': 0, 'V27': 0, 'V28': 0,
+        # Raw
+        'Amount': amount,
+        'Hour': t.hour,
+        # Engineered
+        'log_amount': np.log1p(amount),
+        'is_night': 1 if t.hour in [0, 1, 2, 3, 4, 5] else 0,
+        'is_business_hours': 1 if 9 <= t.hour <= 17 else 0,
+        'txn_type': t.txn_type,
+        'device_change': t.device_change,
+        'location_change': t.location_change,
+        'account_age_days': t.account_age_days,
+        'is_new_account': 1 if t.account_age_days < 30 else 0,
+        'txn_count_24h': t.txn_count_24h,
+        'is_high_velocity': 1 if t.txn_count_24h > 10 else 0,
+        'amount_vs_avg_ratio': amount / (avg + 1),
+        'is_large_amount': 1 if amount > avg * 3 else 0,
+        'is_small_amount': 1 if amount < 10 else 0,
+        'night_plus_device_change': 1 if (t.hour in [0, 1, 2, 3, 4, 5] and t.device_change) else 0,
+        'new_account_plus_large': 1 if (t.account_age_days < 30 and amount > avg * 3) else 0,
+        'location_and_device_change': t.device_change + t.location_change,
+    }
 
-    if amount > 100000:
-        score += 0.15
-        reasons.append("Very large amount (>100k)")
+    # Use trained feature column order if available
+    feature_cols = META.get('feature_columns', list(row.keys()))
+    df = pd.DataFrame([row])
 
-    if amount < 10 and amount > 0:
-        score += 0.10
-        reasons.append("Micro-transaction (possible card testing)")
+    # Add missing columns as 0
+    for col in feature_cols:
+        if col not in df.columns:
+            df[col] = 0
+    df = df[feature_cols]
 
-    # 2. Time anomalies
-    if t.hour in [1, 2, 3, 4]:
-        score += 0.15
-        reasons.append(f"Unusual hour ({t.hour}:00)")
+    # Scale Amount + Hour with loaded scaler
+    if SCALER is not None:
+        try:
+            df[['Amount', 'Hour']] = SCALER.transform(df[['Amount', 'Hour']])
+        except Exception:
+            pass
 
-    # 3. Device/Location
-    if t.device_change and t.location_change:
-        score += 0.20
-        reasons.append("Both device AND location changed")
-    elif t.device_change:
-        score += 0.10
-        reasons.append("New device")
-    elif t.location_change:
-        score += 0.10
-        reasons.append("New location")
-
-    # 4. Account age
-    if t.account_age_days < 7:
-        score += 0.20
-        reasons.append(f"New account ({t.account_age_days} days)")
-    elif t.account_age_days < 30:
-        score += 0.10
-        reasons.append("Recently opened account")
-
-    # 5. Velocity
-    if t.txn_count_24h > 20:
-        score += 0.20
-        reasons.append(f"High velocity ({t.txn_count_24h} txns/24h)")
-    elif t.txn_count_24h > 10:
-        score += 0.10
-        reasons.append("Elevated velocity")
-
-    # 6. Combined signals
-    if t.device_change and t.location_change and t.account_age_days < 30:
-        score += 0.15
-        reasons.append("New account + device + location change")
-
-    if amount > 50000 and t.hour in [1, 2, 3, 4, 5]:
-        score += 0.15
-        reasons.append("Large amount at odd hours")
-
-    return min(1.0, score), reasons
+    return df
 
 
-def ml_full_score(t: TxnFeatures) -> tuple:
-    """Predict using full XGBoost model (V1-V28)."""
-    if 'full_model' not in ARTIFACTS:
-        return None, []
-
-    try:
-        feature_cols = ARTIFACTS['full_meta']['feature_columns']
-        row = {col: 0.0 for col in feature_cols}
-
-        # Fill known features
-        row['Amount'] = t.amount
-        row['Hour'] = t.hour
-
-        # Fill V1-V28 if provided
-        for i, v in enumerate(t.v_features[:28]):
-            col = f'V{i+1}'
-            if col in row:
-                row[col] = float(v)
-
-        df = pd.DataFrame([row])[feature_cols]
-
-        # Scale Amount + Hour
-        scaler = ARTIFACTS['full_scaler']
-        df[['Amount', 'Hour']] = scaler.transform(df[['Amount', 'Hour']])
-
-        proba = float(ARTIFACTS['full_model'].predict_proba(df)[0, 1])
-        return proba, []
-    except Exception as e:
-        print(f"ML error: {e}")
-        return None, []
+# ---------- Helper: risk level ----------
+def _risk_level(score: float) -> str:
+    if score >= 0.8:
+        return "HIGH"
+    if score >= THRESHOLD:
+        return "MEDIUM"
+    if score >= 0.3:
+        return "LOW"
+    return "SAFE"
 
 
+# ---------- ENDPOINT 1: /predict ----------
 @router.post("/predict")
 def predict_fraud(t: TxnFeatures):
-    """
-    Hybrid prediction:
-    - If v_features provided → use ML model primarily
-    - Else → use contextual scoring primarily
-    - Final = weighted combination
-    """
-    if 'full_model' not in ARTIFACTS:
-        raise HTTPException(503, "Model not trained. Run train_fraud_full.py")
+    """Fast prediction without explanation."""
+    if MODEL is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Fraud model not trained yet. Run training/train_fraud.py first."
+        )
 
-    # Get ML score
-    ml_score, _ = ml_full_score(t)
+    try:
+        X = build_feature_vector(t)
+        proba = float(MODEL.predict_proba(X)[0, 1])
+        is_fraud = proba >= THRESHOLD
 
-    # Get contextual score
-    ctx_score, reasons = contextual_risk_score(t)
+        # Top feature importance (from model, not SHAP)
+        top_features = []
+        try:
+            if hasattr(MODEL, 'feature_importances_'):
+                importances = MODEL.feature_importances_
+                cols = X.columns.tolist()
+                pairs = sorted(zip(cols, importances),
+                               key=lambda x: x[1], reverse=True)[:5]
+                top_features = [
+                    {'feature': k, 'importance': round(float(v), 4)}
+                    for k, v in pairs
+                ]
+        except Exception:
+            pass
 
-    # Final combination
-    if ml_score is not None and len(t.v_features) >= 28:
-        # Full data available: ML dominates
-        final_score = 0.7 * ml_score + 0.3 * ctx_score
-        source = "ML+Context"
-    else:
-        # Production mode: contextual dominates
-        # Use a soft ML prior as backup (weak signal from amount only)
-        final_score = 0.6 * ctx_score + 0.4 * (ctx_score * 0.5)
-        # Actually simpler: just use contextual
-        final_score = ctx_score
-        source = "Contextual"
+        return {
+            'fraud_score': round(proba, 4),
+            'is_fraud': bool(is_fraud),
+            'threshold': round(float(THRESHOLD), 4),
+            'risk_level': _risk_level(proba),
+            'top_features': top_features,
+            'model': META.get('best_model', 'XGBoost'),
+        }
 
-    # Decide
-    threshold = ARTIFACTS.get('full_threshold', 0.5)
-    # For contextual mode, use fixed 0.5
-    if source == "Contextual":
-        threshold = 0.5
-
-    is_fraud = final_score >= threshold
-
-    if final_score >= 0.75:
-        risk = "HIGH"
-    elif final_score >= 0.5:
-        risk = "MEDIUM"
-    elif final_score >= 0.3:
-        risk = "LOW"
-    else:
-        risk = "SAFE"
-
-    return {
-        'fraud_score': round(final_score, 4),
-        'ml_score': round(ml_score, 4) if ml_score is not None else None,
-        'contextual_score': round(ctx_score, 4),
-        'is_fraud': bool(is_fraud),
-        'threshold': round(float(threshold), 4),
-        'risk_level': risk,
-        'reasons': reasons,
-        'source': source,
-        'model': 'XGBoost-Full + Rules',
-    }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Prediction error: {str(e)}")
 
 
+# ---------- ENDPOINT 2: /explain (SHAP) ----------
+@router.post("/explain")
+def explain_prediction(t: TxnFeatures):
+    """Return prediction + SHAP feature contributions."""
+    if MODEL is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Model not trained yet."
+        )
+
+    try:
+        X = build_feature_vector(t)
+        proba = float(MODEL.predict_proba(X)[0, 1])
+        is_fraud = proba >= THRESHOLD
+
+        # SHAP explanation
+        try:
+            explanation = shap_service.explain(X, top_k=10)
+        except Exception as e:
+            explanation = {'error': f'SHAP failed: {str(e)}'}
+
+        return {
+            'prediction': {
+                'fraud_score': round(proba, 4),
+                'is_fraud': bool(is_fraud),
+                'threshold': round(float(THRESHOLD), 4),
+                'risk_level': _risk_level(proba),
+            },
+            'explanation': explanation,
+            'model': META.get('best_model', 'XGBoost'),
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Explain error: {str(e)}")
+
+
+# ---------- ENDPOINT 3: /model-info ----------
 @router.get("/model-info")
 def model_info():
-    if 'full_model' not in ARTIFACTS:
+    """Return model metadata."""
+    if MODEL is None:
         return {'status': 'not_trained'}
-    meta = ARTIFACTS['full_meta']
     return {
         'status': 'ready',
-        'model': meta.get('model'),
-        'roc_auc': meta.get('roc_auc'),
-        'auprc': meta.get('auprc'),
-        'threshold': meta.get('threshold'),
-        'feature_count': len(meta.get('feature_columns', [])),
-        'mode': 'hybrid',
+        'best_model': META.get('best_model'),
+        'threshold': THRESHOLD,
+        'metrics': META.get('metrics', {}),
+        'all_results': META.get('all_results', {}),
+        'feature_count': len(META.get('feature_columns', [])),
     }
+
+
+# ---------- ENDPOINT 4: /shap-importance ----------
+@router.get("/shap-importance")
+def global_shap_importance():
+    """Return global feature importance from SHAP analysis."""
+    path = os.path.join(MODEL_DIR, 'shap_importance.json')
+    if not os.path.exists(path):
+        raise HTTPException(
+            status_code=404,
+            detail="Run training/explainability.py first to generate shap_importance.json"
+        )
+    with open(path) as f:
+        return json.load(f)

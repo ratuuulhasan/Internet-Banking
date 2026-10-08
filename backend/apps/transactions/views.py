@@ -169,29 +169,28 @@ class TransferView(APIView):
 
     @staticmethod
     def _check_fraud(txn, account):
-        """Call AI microservice for fraud detection."""
+        """
+        Call AI microservice /fraud/explain endpoint.
+        Returns (fraud_score, risk_level, explanation).
+        """
         try:
             import requests
             from django.conf import settings
             from django.utils import timezone
             from django.db import models
 
+            # Velocity features
             last_24h = timezone.now() - timezone.timedelta(hours=24)
-
-            # Velocity
-            recent_qs = Transaction.objects.filter(
+            recent = Transaction.objects.filter(
                 from_account__user=account.user,
                 created_at__gte=last_24h,
             ).exclude(transaction_id=txn.transaction_id)
 
-            txn_count_24h = recent_qs.count()
-
-            if recent_qs.exists():
-                avg_amount = float(
-                    recent_qs.aggregate(models.Avg('amount'))['amount__avg'] or 0
-                )
-            else:
-                avg_amount = float(txn.amount)
+            txn_count_24h = recent.count()
+            avg_amount = (
+                float(recent.aggregate(models.Avg('amount'))['amount__avg'] or 0)
+                if recent.exists() else float(txn.amount)
+            )
 
             payload = {
                 'amount': float(txn.amount),
@@ -204,21 +203,29 @@ class TransferView(APIView):
                 'avg_amount_24h': avg_amount,
             }
 
+            # Use /explain for full explanation
             r = requests.post(
-                f"{settings.AI_SERVICE_URL}/fraud/predict",
+                f"{settings.AI_SERVICE_URL}/fraud/explain",
                 json=payload,
                 timeout=5,
             )
 
             if r.status_code == 200:
                 data = r.json()
-                score = data.get('fraud_score', 0)
-                txn.fraud_score = score
-                txn.save(update_fields=['fraud_score'])
-                print(f"🔍 Fraud check: {score} ({data.get('risk_level')}) - {data.get('reasons', [])}")
-                return score
+                prediction = data.get('prediction', {})
+                explanation = data.get('explanation', {})
+
+                # Store in transaction
+                txn.fraud_score = prediction.get('fraud_score', 0)
+                txn.risk_level = prediction.get('risk_level', 'SAFE')
+                txn.fraud_explanation = explanation
+                txn.save(update_fields=[
+                    'fraud_score', 'risk_level', 'fraud_explanation'
+                ])
+
+                return txn.fraud_score
 
         except Exception as e:
-            print(f"⚠️  Fraud check failed: {e}")
+            print(f"⚠️  Fraud explain failed: {e}")
 
         return 0.0

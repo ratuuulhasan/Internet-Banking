@@ -64,3 +64,4 @@ urllib3==2.8.0
 uvicorn==0.54.0
 webencodings==0.6.1
 xgboost==3.4.1
+shap==0.52.0
