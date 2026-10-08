@@ -24,6 +24,9 @@ export default function AdminSidebar() {
         <Nav.Link as={NavLink} to="/admin/complaints" className="text-white">
           🎫 Complaints
         </Nav.Link>
+        <Nav.Link as={NavLink} to="/admin/ml" className="text-white">
+          🧠 ML Pipeline
+        </Nav.Link>
       </Nav>
     </div>
   );

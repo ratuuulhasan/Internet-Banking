@@ -28,6 +28,8 @@ import AdminKYC from './pages/admin/KYCApproval';
 import AdminFraud from './pages/admin/FraudAlerts';
 import AdminLoans from './pages/admin/Loans';
 import AdminComplaints from './pages/admin/Complaints';
+import MLPipeline from './pages/admin/MLPipeline';
+
 
 const Protected = ({ children }) => {
   const { user, loading } = useContext(AuthContext);
@@ -62,6 +64,7 @@ function AppRoutes() {
           <Route path="fraud" element={<AdminFraud />} />
           <Route path="loans" element={<AdminLoans />} />
           <Route path="complaints" element={<AdminComplaints />} />
+          <Route path="ml" element={<MLPipeline />} />
         </Route>
       </Routes>
       <ToastContainer position="top-right" />

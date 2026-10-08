@@ -1,7 +1,3 @@
-"""
-Fraud Detection API Router.
-Loads trained XGBoost model + SHAP explainer and serves predictions.
-"""
 import os
 import json
 import joblib
@@ -10,8 +6,9 @@ import pandas as pd
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-# 👇 SHAP service import
+# 👇 Services
 from services.shap_service import shap_service
+from services.model_registry import registry
 
 router = APIRouter()
 
@@ -20,29 +17,24 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MODEL_DIR = os.path.join(BASE_DIR, 'models')
 
 
-# ---------- Load model on module import ----------
-def load_artifacts():
-    try:
-        model = joblib.load(os.path.join(MODEL_DIR, 'fraud_model.pkl'))
-        scaler = joblib.load(os.path.join(MODEL_DIR, 'scaler.pkl'))
-        threshold = joblib.load(os.path.join(MODEL_DIR, 'threshold.pkl'))
-        meta = {}
-        meta_path = os.path.join(MODEL_DIR, 'model_meta.json')
-        if os.path.exists(meta_path):
-            with open(meta_path) as f:
-                meta = json.load(f)
-        print("✅ Fraud model loaded successfully")
-        return model, scaler, threshold, meta
-    except Exception as e:
-        print(f"⚠️  Model not found ({e}). Run training first:")
-        print("   cd training && python train_fraud.py")
-        return None, None, 0.5, {}
+# ============================================================
+# REGISTRY ACCESSOR (auto hot-reload)
+# ============================================================
+def get_current():
+    """
+    Get fresh model artifacts from the registry.
+    Auto-reloads if reload.flag changed (i.e. new model activated).
+    Returns: (model, scaler, threshold, meta)
+    """
+    registry.check_reload()
+    if not registry.is_loaded:
+        registry.load()
+    return registry.model, registry.scaler, registry.threshold, registry.meta
 
 
-MODEL, SCALER, THRESHOLD, META = load_artifacts()
-
-
-# ---------- Request Schema ----------
+# ============================================================
+# REQUEST SCHEMA
+# ============================================================
 class TxnFeatures(BaseModel):
     amount: float = Field(..., ge=0)
     hour: int = Field(12, ge=0, le=23)
@@ -54,9 +46,17 @@ class TxnFeatures(BaseModel):
     avg_amount_24h: float = 0.0
 
 
-# ---------- Feature builder ----------
-def build_feature_vector(t: TxnFeatures) -> pd.DataFrame:
-    """Build feature row matching training column order."""
+# ============================================================
+# FEATURE BUILDER (takes scaler + meta explicitly)
+# ============================================================
+def build_feature_vector(t: TxnFeatures,
+                          scaler=None,
+                          meta: dict = None) -> pd.DataFrame:
+    """
+    Build feature row matching training column order.
+    Uses provided scaler + meta (from registry).
+    """
+    meta = meta or {}
     amount = t.amount
     avg = t.avg_amount_24h or amount
 
@@ -84,13 +84,15 @@ def build_feature_vector(t: TxnFeatures) -> pd.DataFrame:
         'amount_vs_avg_ratio': amount / (avg + 1),
         'is_large_amount': 1 if amount > avg * 3 else 0,
         'is_small_amount': 1 if amount < 10 else 0,
-        'night_plus_device_change': 1 if (t.hour in [0, 1, 2, 3, 4, 5] and t.device_change) else 0,
-        'new_account_plus_large': 1 if (t.account_age_days < 30 and amount > avg * 3) else 0,
+        'night_plus_device_change':
+            1 if (t.hour in [0, 1, 2, 3, 4, 5] and t.device_change) else 0,
+        'new_account_plus_large':
+            1 if (t.account_age_days < 30 and amount > avg * 3) else 0,
         'location_and_device_change': t.device_change + t.location_change,
     }
 
     # Use trained feature column order if available
-    feature_cols = META.get('feature_columns', list(row.keys()))
+    feature_cols = meta.get('feature_columns', list(row.keys()))
     df = pd.DataFrame([row])
 
     # Add missing columns as 0
@@ -100,49 +102,62 @@ def build_feature_vector(t: TxnFeatures) -> pd.DataFrame:
     df = df[feature_cols]
 
     # Scale Amount + Hour with loaded scaler
-    if SCALER is not None:
+    if scaler is not None:
         try:
-            df[['Amount', 'Hour']] = SCALER.transform(df[['Amount', 'Hour']])
+            df[['Amount', 'Hour']] = scaler.transform(df[['Amount', 'Hour']])
         except Exception:
+            # If scaler fails (feature mismatch), skip scaling silently
             pass
 
     return df
 
 
-# ---------- Helper: risk level ----------
-def _risk_level(score: float) -> str:
+# ============================================================
+# RISK LEVEL HELPER
+# ============================================================
+def _risk_level(score: float, threshold: float) -> str:
     if score >= 0.8:
         return "HIGH"
-    if score >= THRESHOLD:
+    if score >= threshold:
         return "MEDIUM"
     if score >= 0.3:
         return "LOW"
     return "SAFE"
 
 
-# ---------- ENDPOINT 1: /predict ----------
+# ============================================================
+# ENDPOINT 1: POST /fraud/predict
+# ============================================================
 @router.post("/predict")
 def predict_fraud(t: TxnFeatures):
-    """Fast prediction without explanation."""
-    if MODEL is None:
+    """
+    Fast prediction without SHAP explanation.
+    Auto-reloads model if a new version has been activated.
+    """
+    model, scaler, threshold, meta = get_current()
+
+    if model is None:
         raise HTTPException(
             status_code=503,
-            detail="Fraud model not trained yet. Run training/train_fraud.py first."
+            detail="Fraud model not loaded. Run training/train_fraud.py first."
         )
 
     try:
-        X = build_feature_vector(t)
-        proba = float(MODEL.predict_proba(X)[0, 1])
-        is_fraud = proba >= THRESHOLD
+        X = build_feature_vector(t, scaler, meta)
+        proba = float(model.predict_proba(X)[0, 1])
+        is_fraud = proba >= threshold
 
-        # Top feature importance (from model, not SHAP)
+        # Top feature importance (from model — not SHAP)
         top_features = []
         try:
-            if hasattr(MODEL, 'feature_importances_'):
-                importances = MODEL.feature_importances_
+            if hasattr(model, 'feature_importances_'):
+                importances = model.feature_importances_
                 cols = X.columns.tolist()
-                pairs = sorted(zip(cols, importances),
-                               key=lambda x: x[1], reverse=True)[:5]
+                pairs = sorted(
+                    zip(cols, importances),
+                    key=lambda x: x[1],
+                    reverse=True
+                )[:5]
                 top_features = [
                     {'feature': k, 'importance': round(float(v), 4)}
                     for k, v in pairs
@@ -153,30 +168,41 @@ def predict_fraud(t: TxnFeatures):
         return {
             'fraud_score': round(proba, 4),
             'is_fraud': bool(is_fraud),
-            'threshold': round(float(THRESHOLD), 4),
-            'risk_level': _risk_level(proba),
+            'threshold': round(float(threshold), 4),
+            'risk_level': _risk_level(proba, threshold),
             'top_features': top_features,
-            'model': META.get('best_model', 'XGBoost'),
+            'model': meta.get('best_model', 'XGBoost'),
+            'model_version': registry.version_tag or 'unknown',
         }
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Prediction error: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Prediction error: {str(e)}"
+        )
 
 
-# ---------- ENDPOINT 2: /explain (SHAP) ----------
+# ============================================================
+# ENDPOINT 2: POST /fraud/explain  (SHAP)
+# ============================================================
 @router.post("/explain")
 def explain_prediction(t: TxnFeatures):
-    """Return prediction + SHAP feature contributions."""
-    if MODEL is None:
+    """
+    Return prediction + SHAP feature contributions.
+    Same input as /predict, but includes feature-level explanation.
+    """
+    model, scaler, threshold, meta = get_current()
+
+    if model is None:
         raise HTTPException(
             status_code=503,
             detail="Model not trained yet."
         )
 
     try:
-        X = build_feature_vector(t)
-        proba = float(MODEL.predict_proba(X)[0, 1])
-        is_fraud = proba >= THRESHOLD
+        X = build_feature_vector(t, scaler, meta)
+        proba = float(model.predict_proba(X)[0, 1])
+        is_fraud = proba >= threshold
 
         # SHAP explanation
         try:
@@ -188,34 +214,46 @@ def explain_prediction(t: TxnFeatures):
             'prediction': {
                 'fraud_score': round(proba, 4),
                 'is_fraud': bool(is_fraud),
-                'threshold': round(float(THRESHOLD), 4),
-                'risk_level': _risk_level(proba),
+                'threshold': round(float(threshold), 4),
+                'risk_level': _risk_level(proba, threshold),
             },
             'explanation': explanation,
-            'model': META.get('best_model', 'XGBoost'),
+            'model': meta.get('best_model', 'XGBoost'),
+            'model_version': registry.version_tag or 'unknown',
         }
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Explain error: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Explain error: {str(e)}"
+        )
 
 
-# ---------- ENDPOINT 3: /model-info ----------
+# ============================================================
+# ENDPOINT 3: GET /fraud/model-info
+# ============================================================
 @router.get("/model-info")
 def model_info():
-    """Return model metadata."""
-    if MODEL is None:
-        return {'status': 'not_trained'}
+    """Return current model metadata + version tag."""
+    registry.check_reload()
+
+    if not registry.is_loaded:
+        return {'status': 'not_loaded'}
+
     return {
         'status': 'ready',
-        'best_model': META.get('best_model'),
-        'threshold': THRESHOLD,
-        'metrics': META.get('metrics', {}),
-        'all_results': META.get('all_results', {}),
-        'feature_count': len(META.get('feature_columns', [])),
+        'version_tag': registry.version_tag,
+        'best_model': registry.meta.get('best_model'),
+        'threshold': registry.threshold,
+        'metrics': registry.meta.get('metrics', {}),
+        'all_results': registry.meta.get('all_results', {}),
+        'feature_count': len(registry.meta.get('feature_columns', [])),
     }
 
 
-# ---------- ENDPOINT 4: /shap-importance ----------
+# ============================================================
+# ENDPOINT 4: GET /fraud/shap-importance
+# ============================================================
 @router.get("/shap-importance")
 def global_shap_importance():
     """Return global feature importance from SHAP analysis."""
@@ -223,7 +261,10 @@ def global_shap_importance():
     if not os.path.exists(path):
         raise HTTPException(
             status_code=404,
-            detail="Run training/explainability.py first to generate shap_importance.json"
+            detail=(
+                "Run training/explainability.py first to generate "
+                "shap_importance.json"
+            )
         )
     with open(path) as f:
         return json.load(f)
