@@ -69,6 +69,7 @@ INSTALLED_APPS = [
 
     # ML Pipeline
     'apps.ml_pipeline',
+    'apps.chat'
 ]
 
 

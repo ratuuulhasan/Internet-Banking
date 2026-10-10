@@ -18,6 +18,7 @@ import Loans from './pages/Loans';
 import Notifications from './pages/Notifications';
 import Complaints from './pages/Complaints';
 import Navbar from './components/Navbar';
+import ChatWidget from './components/ChatWidget';
 
 // Admin
 import AdminRoute from './components/AdminRoute';
@@ -67,6 +68,7 @@ function AppRoutes() {
           <Route path="ml" element={<MLPipeline />} />
         </Route>
       </Routes>
+      {user && <ChatWidget />}
       <ToastContainer position="top-right" />
     </>
   );
