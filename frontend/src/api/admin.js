@@ -15,6 +15,7 @@ export const adminApi = {
   listKYC: (params) => api.get('/kyc/', { params }),
   approveKYC: (id, status, remarks) =>
     api.post(`/kyc/${id}/approve/`, { status, remarks }),
+  reprocessOCR: (id) => api.post(`/kyc/${id}/reprocess_ocr/`),
 
   // Fraud
   listFraudAlerts: () => api.get('/admin/fraud-alerts/'),
