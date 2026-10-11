@@ -75,12 +75,31 @@ async def extract_nid_base64(req: Base64ImageRequest):
 
 
 def _run_extract_nid(image_bytes: bytes) -> dict:
-    """Core extraction pipeline — reused by both endpoints."""
+    """Core extraction — runs on multiple preprocessed versions."""
     processed = preprocess_nid(image_bytes)
-    extracted = extract_text(processed['deskewed'])
-    print(f"📄 Extracted {len(extracted)} text regions")
 
-    parsed = parse_nid(extracted)
+    # Run OCR on TWO versions (different preprocessing for better results)
+    all_extracted = []
+
+    # Attempt 1: Deskewed sharpen (best for tilted)
+    extracted_1 = extract_text(processed['deskewed'], use_paragraph=False)
+
+    # Attempt 2: Threshold (best for clean text)
+    extracted_2 = extract_text(processed['threshold'], use_paragraph=False)
+
+    # Merge with dedup
+    seen = set()
+    for item in extracted_1 + extracted_2:
+        key = (item['text'].strip(), item['y_center'] // 15)
+        if key not in seen:
+            seen.add(key)
+            all_extracted.append(item)
+
+    # Sort
+    all_extracted.sort(key=lambda e: (e['y_center'], e['x_left']))
+    print(f"📄 Extracted {len(all_extracted)} unique regions")
+
+    parsed = parse_nid(all_extracted)
     validation = full_validation(parsed)
     tamper = detect_tampering(image_bytes)
 
@@ -89,9 +108,9 @@ def _run_extract_nid(image_bytes: bytes) -> dict:
         'ocr': parsed,
         'validation': validation,
         'tamper': tamper,
-        'extracted_count': len(extracted),
+        'extracted_count': len(all_extracted),
+        'fields_extracted': parsed.get('fields_extracted', 0),
     }
-
 
 @router.post("/verify-kyc")
 async def verify_kyc(

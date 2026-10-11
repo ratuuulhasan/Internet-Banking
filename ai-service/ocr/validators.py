@@ -58,31 +58,48 @@ def validate_dob(dob_str: str) -> dict:
     return {'valid': True, 'reason': 'OK', 'age': age, 'parsed': parsed.isoformat()}
 
 
-def validate_confidence(avg_conf: float, threshold: float = 0.6) -> dict:
-    """Check if OCR confidence is acceptable."""
+def validate_confidence(avg_conf: float, threshold: float = 0.35) -> dict:
+    """
+    Check if OCR confidence is acceptable.
+    Lowered threshold for Bangla NID (EasyOCR bn accuracy is typically ~0.3-0.5).
+    """
     if avg_conf < threshold:
         return {
             'valid': False,
             'reason': f'Low OCR confidence ({avg_conf:.2f} < {threshold}). Upload clearer image',
+            'warning': True,  # Not a hard fail
         }
     return {'valid': True, 'reason': 'OK'}
 
 
 def full_validation(ocr_data: dict) -> dict:
-    """Run all validations."""
+    """
+    Run all validations.
+    Confidence is a warning, not a hard fail.
+    """
     results = {
         'nid': validate_nid_format(ocr_data.get('nid_number')),
         'dob': validate_dob(ocr_data.get('dob')),
         'confidence': validate_confidence(ocr_data.get('avg_confidence', 0)),
     }
 
+    # Only nid & dob are hard requirements; confidence is a warning
+    hard_checks = ['nid', 'dob']
+    passed_hard = all(results[k]['valid'] for k in hard_checks)
+
     all_valid = all(r['valid'] for r in results.values())
 
     return {
-        'passed': all_valid,
+        'passed': passed_hard,               # only hard checks matter
+        'all_checks_passed': all_valid,      # includes confidence
         'checks': results,
         'failed_reasons': [
             f"{k}: {v['reason']}"
             for k, v in results.items() if not v['valid']
+        ],
+        'warnings': [
+            v['reason']
+            for k, v in results.items()
+            if not v['valid'] and k == 'confidence'
         ],
     }
