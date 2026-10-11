@@ -156,6 +156,11 @@ def rebuild_index():
 
 @router.get("/health")
 def chatbot_health():
+    # Force build/load FAISS if not loaded
+    from chatbot.vector_store import vector_store
+    if vector_store.index is None:
+        vector_store.build(force=False)
+    
     return {
         'status': 'ok',
         'model': MODEL,

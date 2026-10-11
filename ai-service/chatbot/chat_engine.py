@@ -24,7 +24,7 @@ if not _api_key:
     print(f"   .env exists: {ENV_PATH.exists()}")
 
 client = OpenAI(api_key=_api_key) if _api_key else None
-MODEL = os.getenv('OPENAI_MODEL', 'gpt-5.6-terra')
+MODEL = os.getenv('OPENAI_MODEL', 'gpt-4o-mini')
 MAX_TOKENS = int(os.getenv('CHATBOT_MAX_TOKENS', 800))
 TEMPERATURE = float(os.getenv('CHATBOT_TEMPERATURE', 0.3))
 

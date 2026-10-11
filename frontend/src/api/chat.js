@@ -27,7 +27,10 @@ export async function streamChat({ sessionId, message, onToken, onSources, onDon
     });
 
     if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
+    const errText = await response.text();
+    console.error('Streaming 500 error body:', errText.substring(0, 2000));
+    onError?.(`HTTP ${response.status} — check browser console for details`);
+    return;
     }
 
     const reader = response.body.getReader();
