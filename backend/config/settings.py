@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 from datetime import timedelta
 from decouple import config
@@ -667,3 +668,63 @@ ACCOUNT_NUMBER_LENGTH = 12
 TRANSACTION_REF_PREFIX = 'TXN'
 DEFAULT_PAGE_SIZE = 20
 MAX_PAGE_SIZE = 100
+
+# ============================================================
+# EMAIL CONFIGURATION
+# ============================================================
+EMAIL_BACKEND = config(
+    'EMAIL_BACKEND',
+    default='django.core.mail.backends.console.EmailBackend'
+)
+
+# Gmail SMTP
+EMAIL_HOST = config('EMAIL_HOST', default='smtp.gmail.com')
+EMAIL_PORT = config('EMAIL_PORT', cast=int, default=587)
+EMAIL_USE_TLS = config('EMAIL_USE_TLS', cast=bool, default=True)
+EMAIL_HOST_USER = config('EMAIL_HOST_USER', default='')
+EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD', default='')
+
+# SendGrid (optional — if using SendGrid API)
+SENDGRID_API_KEY = config('SENDGRID_API_KEY', default='')
+
+# Default "From" address
+DEFAULT_FROM_EMAIL = config(
+    'DEFAULT_FROM_EMAIL',
+    default='Internet Banking <noreply@internetbanking.com>'
+)
+
+# ============================================================
+# SMS CONFIGURATION
+# ============================================================
+SMS_PROVIDER = config('SMS_PROVIDER', default='console')  # console|twilio|sslwireless
+
+# Twilio
+TWILIO_ACCOUNT_SID = config('TWILIO_ACCOUNT_SID', default='')
+TWILIO_AUTH_TOKEN = config('TWILIO_AUTH_TOKEN', default='')
+TWILIO_PHONE_NUMBER = config('TWILIO_PHONE_NUMBER', default='')
+
+# SSL Wireless (Bangladesh)
+SSLWIRELESS_API_KEY = config('SSLWIRELESS_API_KEY', default='')
+SSLWIRELESS_SENDER_ID = config('SSLWIRELESS_SENDER_ID', default='')
+SSLWIRELESS_API_URL = config(
+    'SSLWIRELESS_API_URL',
+    default='https://smsplus.sslwireless.com/api/v3/send-sms'
+)
+
+# ============================================================
+# NOTIFICATION SETTINGS
+# ============================================================
+NOTIFICATION_SETTINGS = {
+    'SEND_WELCOME_EMAIL': True,
+    'SEND_OTP_SMS': True,
+    'SEND_OTP_EMAIL': True,
+    'SEND_TRANSACTION_EMAIL': True,
+    'SEND_TRANSACTION_SMS': True,
+    'SEND_KYC_STATUS_EMAIL': True,
+    'SEND_KYC_STATUS_SMS': True,
+    'SEND_LOAN_STATUS_EMAIL': True,
+    'SEND_COMPLAINT_UPDATES': True,
+}
+
+# Frontend URL (for links in emails)
+FRONTEND_URL = config('FRONTEND_URL', default='http://localhost:3000')
