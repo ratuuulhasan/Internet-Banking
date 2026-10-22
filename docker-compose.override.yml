@@ -1,0 +1,18 @@
+version: '3.9'
+
+# Auto-loaded by `docker-compose up`. 
+# Overrides apply only in development.
+
+services:
+  backend:
+    environment:
+      - DEBUG=True
+    command: python manage.py runserver 0.0.0.0:8000
+
+  frontend:
+    stdin_open: true
+    tty: true
+
+  ai-service:
+    environment:
+      - PYTHONUNBUFFERED=1

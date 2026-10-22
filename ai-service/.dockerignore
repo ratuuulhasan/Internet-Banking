@@ -1,0 +1,11 @@
+venv/
+__pycache__/
+*.pyc
+.git/
+.env
+models/
+training/dataset/
+*.pkl
+logs/
+.DS_Store
+.pytest_cache/
