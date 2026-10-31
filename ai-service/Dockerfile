@@ -13,7 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libx11-dev \
     libgtk-3-dev \
     libboost-python-dev \
-    libgl1-mesa-glx \
+    libgl1 \
     libglib2.0-0 \
     libsm6 \
     libxext6 \
