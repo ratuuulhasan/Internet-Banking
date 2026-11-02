@@ -76,24 +76,35 @@ Deploy the entire architecture (7 services) with a single command using Docker.
 - Git installed.
 
 ### 1. Clone the Repository
-bash git clone https://github.com/your-username/internet-banking.git
+
+git clone https://github.com/your-username/internet-banking.git
 
 cd internet-banking
 
 ### 2. Setup Environment Variables
+
 Copy the .env.example file and fill in your credentials (OpenAI API Key, Email SMTP, etc.).
 
-bash cp .env.example .env
+cp .env.example .env
+
 ### 3. Build & Run
-bash
-# Build and start all services in detached mode
+
+Build and start all services in detached mode
+
 docker-compose up --build -d
+
 ### 4. Access the Application
+
 Service	URL
+
 Frontend (React)	http://localhost:3000
+
 Backend API (Swagger)	http://localhost:8000/api/docs/
+
 AI Service (FastAPI)	http://localhost:9000/docs
+
 Django Admin Panel	http://localhost:8000/admin/
+
 (Default Admin: admin@ibs.com / Admin@12345 - Change immediately in production)
 
 🏗️ Project Architecture
