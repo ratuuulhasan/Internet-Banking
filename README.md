@@ -108,14 +108,21 @@ Django Admin Panel	http://localhost:8000/admin/
 (Default Admin: admin@ibs.com / Admin@12345 - Change immediately in production)
 
 🏗️ Project Architecture
-text
+
 ├── backend/                 # Django REST API & Celery Workers
+
 ├── ai-service/              # FastAPI AI Microservice (OCR, Fraud, Chatbot)
+
 ├── frontend/                # React.js Application
+
 ├── nginx/                   # Nginx Reverse Proxy Configuration
+
 ├── docker-compose.yml       # Multi-container orchestration
+
 └── Makefile                 # Useful Docker commands
+
 🧪 Testing the API
+
 Use the interactive Swagger UI at http://localhost:8000/api/docs/ to test endpoints.
 
 Register a user via /api/auth/register/.
@@ -127,6 +134,7 @@ Authorize the Swagger UI with the JWT token.
 Test fund transfer, KYC upload, etc.
 
 🛡️ License
+
 This project is licensed under the MIT License - see the LICENSE file for details.
 
 <div align="center"> <i>Built with ❤️ for secure, intelligent banking.</i> </div> ```
