@@ -136,5 +136,3 @@ Test fund transfer, KYC upload, etc.
 🛡️ License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
-
-<div align="center"> <i>Built with ❤️ for secure, intelligent banking.</i> </div>
